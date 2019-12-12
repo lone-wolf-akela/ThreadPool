@@ -1,4 +1,4 @@
-#ifndef THREAD_POOL_HPP
+﻿#ifndef THREAD_POOL_HPP
 #define THREAD_POOL_HPP
 
 #include <functional>
@@ -6,16 +6,40 @@
 #include <queue>
 #include <memory>
 #include <functional>
+#include <type_traits>
 
 // workaround for https://developercommunity.visualstudio.com/content/problem/108672/unable-to-move-stdpackaged-task-into-any-stl-conta.html
+// and: https://developercommunity.visualstudio.com/content/problem/324418/c-stdpackaged-task-does-not-work-with-non-copyable.html
 #if defined(_MSC_VER) && _MSC_VER < 2000
 #define WORKAROUND_PTR_T(T) std::shared_ptr<T>
 #define WORKAROUND_PTR_GET(x) (*(x))
 #define WORKAROUND_MAKE_PTR(T) std::make_shared<T>
+
+template<typename MoveOnlyCallable>
+class Copyable_Bind
+{
+public:
+	template<typename F, typename... Args>
+	Copyable_Bind(F&& f, Args&&... args):
+	c(std::make_shared<MoveOnlyCallable>(std::bind(std::forward<F>(f), std::forward<Args>(args)...)))
+	{}
+	
+	std::invoke_result_t<MoveOnlyCallable> operator()()
+	{
+		return (*c)();
+	}
+private:
+	std::shared_ptr<MoveOnlyCallable> c;
+};
+template<typename F, typename... Args>
+Copyable_Bind(F&& f, Args&&... args)->Copyable_Bind<decltype(std::bind(std::forward<F>(f), std::forward<Args>(args)...)) > ;
+
+#define WPRKAROUND_BIND(...) Copyable_Bind(__VA_ARGS__)
 #else
 #define WORKAROUND_PTR_T(T) T
 #define WORKAROUND_PTR_GET(x) (x)
 #define WORKAROUND_MAKE_PTR(T) T
+#define WPRKAROUND_BIND(...) std::bind(__VA_ARGS__)
 #endif
 
 class ThreadPool {
@@ -76,7 +100,7 @@ auto ThreadPool::enqueue(F&& f, Args&&... args)
     using return_type = std::invoke_result_t<F, Args...>;
 
 	auto task = WORKAROUND_MAKE_PTR(std::packaged_task<return_type()>)(
-		std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+		WPRKAROUND_BIND(std::forward<F>(f), std::forward<Args>(args)...)
 		);
 
     std::future<return_type> res = WORKAROUND_PTR_GET(task).get_future();
